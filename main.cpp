@@ -9,7 +9,7 @@
 #pragma comment(lib, "ws2_32.lib")
 
 // https://www.rfc-editor.org/info/rfc1035/#section-3.2.2
-enum Types {
+enum Types : uint8_t {
     A = 1, // a host address
 
     NS = 2, // an authoritative name server
@@ -43,8 +43,12 @@ enum Types {
     TXT = 16 // text strings
 };
 
-enum QTypes & Types {
-}
+enum Classes : uint8_t {
+    INTE = 1, // the Internet
+    CS = 2, // the CSNET class (Obsolete - used only for examples in some obsolete RFCs)
+    CH = 3, // the CHAOS class
+    HS = 4 // Hesiod [Dyer 87]
+};
 
 //
 // 1  1  1  1  1  1
@@ -71,8 +75,24 @@ struct DNSHeader {
     uint16_t arcount;
 };
 
+// 1  1  1  1  1  1
+// 0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
+// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+// |                                               |
+// /                     QNAME                     /
+// /                                               /
+// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+// |                     QTYPE                     |
+// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+// |                     QCLASS                    |
+// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 struct DNSQuestion {
+    std::vector<std::string> qnames;
+    uint16_t qtype;
+    uint16_t qclass;
 };
+
+
 
 class BufferReader {
 public:
@@ -109,6 +129,32 @@ public:
     std::vector<char> _buffer;
     std::size_t _offset;
 };
+
+std::vector<std::string> read_qnames(BufferReader& reader) {
+    auto read_qname = [](BufferReader& reader) -> std::string {
+        const uint8_t name_length = reader.read<uint8_t>();
+
+        if (name_length == '\0') {
+            return "";
+        }
+
+        return reader.read_string(name_length);
+    };
+
+    std::vector<std::string> qnames{};
+
+    while (true) {
+        std::string qname = read_qname(reader);
+
+        if (qname == "") {
+            break;
+        }
+
+        qnames.push_back(qname);
+    }
+
+    return qnames;
+}
 
 int main() {
     WSADATA wsaData;
@@ -180,16 +226,12 @@ int main() {
             .arcount = ntohs(reader.read<uint16_t>())
         };
 
-        const uint8_t name_length = reader.read<uint8_t>();
-        std::string domain_name = reader.read_string(name_length);
+        DNSQuestion question{
+            .qnames = read_qnames(reader),
+            .qtype = ntohs(reader.read<uint16_t>()),
+            .qclass = ntohs(reader.read<uint16_t>())
+        };
 
-        const uint8_t top_leveL_domain_length = reader.read<uint8_t>();
-        const std::string top_level_domain = reader.read_string(top_leveL_domain_length);
-
-        const uint8_t nulL_terminator = reader.read<uint8_t>();
-
-        const uint16_t q_type = ntohs(reader.read<uint16_t>());
-        const uint16_t q_class = ntohs(reader.read<uint16_t>());
 
         std::cout << "Received " << bytesReceived << " bytes from " << clientIp << ":" << clientPort << std::endl;
         std::cout << "Data: " << buffer.data() << std::endl;
