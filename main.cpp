@@ -1,12 +1,10 @@
 #include <memory>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
 #include <vector>
-
 #include <iostream>
+#include <array>
 
-#pragma comment(lib, "ws2_32.lib")
+#include <boost/asio.hpp>
+
 
 // https://www.rfc-editor.org/info/rfc1035/#section-3.2.2
 enum Types : uint8_t {
@@ -164,6 +162,9 @@ public:
 std::string parse_domain_name(BufferReader& reader) {
     std::string domain_name = "";
 
+    // TODO; https://www.rfc-editor.org/info/rfc1035/#section-4.1.4
+    // Domain compression
+
     while (true) {
 
         uint8_t length_byte = reader.read<uint8_t>();
@@ -183,65 +184,22 @@ std::string parse_domain_name(BufferReader& reader) {
 }
 
 int main() {
-    WSADATA wsaData;
+    boost::asio::io_context io_context;
 
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        return 1;
-    }
+    boost::asio::ip::udp::socket socket(
+        io_context,
+        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 8053)
+    );
 
-    SOCKET serverSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (serverSocket == INVALID_SOCKET) {
-        WSACleanup();
-        return 1;
-    }
+    for (;;) {
+        std::vector<char> receive_buffer(1024);
+        boost::asio::ip::udp::endpoint remote_endpoint;
+        socket.receive_from(
+            boost::asio::buffer(receive_buffer),
+            remote_endpoint
+        );
 
-    sockaddr_in serverAddr{};
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(8053);
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-
-    if (bind(serverSocket, reinterpret_cast<sockaddr *>(&serverAddr), sizeof(serverAddr)) == SOCKET_ERROR) {
-        std::cerr << "Bind failed. Error: " << WSAGetLastError() << "\n";
-        closesocket(serverSocket);
-        WSACleanup();
-        return 1;
-    }
-
-    constexpr int BUFFER_SIZE = 1024;
-
-    std::vector<char> buffer(BUFFER_SIZE);
-    sockaddr_in clientAddr{};
-    int clientAddrLen = sizeof(clientAddr);
-
-    std::cout << "Listening" << std::endl;
-
-    while (true) {
-        std::fill(buffer.begin(), buffer.end(), 0);
-
-        int bytesReceived = recvfrom(serverSocket, buffer.data(), BUFFER_SIZE - 1, 0,
-                                     reinterpret_cast<sockaddr *>(&clientAddr), &clientAddrLen);
-
-        if (bytesReceived == SOCKET_ERROR) {
-            int errorCode = WSAGetLastError();
-
-            if (errorCode == WSAEWOULDBLOCK) {
-                Sleep(10);
-                continue;
-            }
-
-            std::cerr << "Recvfrom failed. Error Code: " << errorCode << "\n";
-            break;
-        }
-
-        char clientIp[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &(clientAddr.sin_addr), clientIp, INET6_ADDRSTRLEN);
-        int clientPort = ntohs(clientAddr.sin_port);
-
-
-        BufferReader reader(buffer);
-
-        // std::vector<uint8_t> bytes = reader.read_bytes(12);
-        // const uint16_t* raw = reinterpret_cast<const uint16_t*>(bytes.data());
+        BufferReader reader(receive_buffer);
 
         DNSHeader header{
             .id = ntohs(reader.read<uint16_t>()),
@@ -276,12 +234,8 @@ int main() {
             answers.push_back(record);
         }
 
-
-        std::cout << "Received " << bytesReceived << " bytes from " << clientIp << ":" << clientPort << std::endl;
-        std::cout << "Data: " << buffer.data() << std::endl;
+        int test = 0;
     }
 
-    closesocket(serverSocket);
-    WSACleanup();
     return 0;
 }
