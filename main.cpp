@@ -2,6 +2,8 @@
 #include <vector>
 #include <iostream>
 #include <array>
+#include <ranges>
+#include <map>
 
 #include <boost/asio.hpp>
 
@@ -154,6 +156,7 @@ public:
 
     size_t offset() const { return _offset; }
     const std::vector<char>& buffer() const { return _buffer; }
+    void seek(std::size_t offset) { _offset = offset; }
 
     std::vector<char> _buffer;
     std::size_t _offset;
@@ -162,8 +165,8 @@ public:
 std::string parse_domain_name(BufferReader& reader) {
     std::string domain_name = "";
 
-    // TODO; https://www.rfc-editor.org/info/rfc1035/#section-4.1.4
-    // Domain compression
+    bool jumped = false;
+    std::size_t original_offset = 0;
 
     while (true) {
 
@@ -173,6 +176,21 @@ std::string parse_domain_name(BufferReader& reader) {
             break;
         }
 
+        // First two bits are the compression flag
+        if ((length_byte & 0b11000000) == 0b11000000) {
+            uint8_t second_byte = reader.read<uint8_t>();
+            // merge last 6 bits and second byte bits to get the offset
+            uint16_t pointer_bytes = ((length_byte & 0b00111111) << 8) | second_byte;
+
+            if (!jumped) {
+                original_offset = reader.offset();
+                jumped = true;
+            }
+
+            reader.seek(pointer_bytes);
+            continue;
+        }
+
         if (!domain_name.empty()) {
             domain_name += ".";
         }
@@ -180,7 +198,18 @@ std::string parse_domain_name(BufferReader& reader) {
         domain_name += reader.read_string(length_byte);
     }
 
+    if (jumped) {
+        reader.seek(original_offset);
+    }
+
     return domain_name;
+}
+
+std::string encode_domain_name(std::string domain_name) {
+
+    for (auto token : std::views::split(domain_name, ',')
+
+
 }
 
 int main() {
@@ -234,7 +263,20 @@ int main() {
             answers.push_back(record);
         }
 
-        int test = 0;
+        DNSHeader sendHeader{
+            .id = 12,
+            .flags = htons(0b000000100000000), // rd set to 1
+            .qdcount = htons(1),
+            .ancount = 0,
+            .nscount = 0,
+            .arcount = 0
+        };
+
+        DNSQuestion sendQuestion{
+            .qname = ""
+        };
+
+
     }
 
     return 0;
