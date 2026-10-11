@@ -23,7 +23,7 @@ public:
         _offset += size;
 
         if (size == 2) {
-            return static_cast<uint16_t>(ntohs(val));
+            return ntohs(val);
         } else if (size == 4) {
             return static_cast<uint32_t>(ntohl(val));
         }
@@ -45,16 +45,26 @@ public:
         return _offset;
     }
 
-    const std::vector<uint8_t>& buffer() const {
+    const std::vector<char>& buffer() const {
         return _buffer;
     }
 
-    uint8_t* buffer_pointer() {
+    char* buffer_pointer() {
         return _buffer.data() + _offset;
     }
 
     void seek(const std::size_t offset) {
         _offset = offset;
+    }
+
+    void resize(const std::size_t size) {
+        _buffer.resize(size);
+    }
+
+    void reset() {
+        _offset = 0;
+        _buffer.clear();
+        _buffer.resize(512);
     }
 private:
     void check_size(std::size_t size) {
@@ -63,6 +73,6 @@ private:
         }
     }
 
-    std::vector<uint8_t> _buffer;
+    std::vector<char> _buffer;
     std::size_t _offset;
 };

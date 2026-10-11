@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 4.1)
 project(dns_resolver)
 
-set(BOOST_INCLUDE_LIBRARIES asio filesystem system thread program_options beast)
+set(BOOST_INCLUDE_LIBRARIES asio filesystem system random thread program_options beast)
 set(BOOST_ENABLE_CMAKE ON)
 
 include(FetchContent)
@@ -24,16 +24,15 @@ set(CMAKE_CXX_STANDARD 23)
 
 add_executable(dns_resolver main.cpp
         server.h
-        connection.h
         dns.h
         buffer-reader.h
-        buffer-writer.h
-        constants.h)
+        buffer-writer.h)
 target_link_libraries(dns_resolver PRIVATE
         Boost::asio
         Boost::filesystem
         Boost::thread
         Boost::program_options
         Boost::beast
+        Boost::random
         spdlog::spdlog
 )

@@ -1,11 +1,12 @@
 #pragma once
 
 #include <vector>
-#include <winsock2.h>
 
 class BufferWriter {
 public:
-    BufferWriter() {}
+    BufferWriter(const uint32_t size = 512) {
+        _buffer.reserve(512);
+    }
 
     template<typename T>
     void write(T val) {
@@ -13,19 +14,23 @@ public:
 
         if (size == 2) {
             val = htons(val);
-        } else if (val == 4) {
+        } else if (size == 4) {
             val = htonl(val);
         }
 
-        write_bytes(reinterpret_cast<const uint8_t>(&val), sizeof(T));
+        write_bytes(reinterpret_cast<const char*>(&val), sizeof(T));
     }
 
-    void write_bytes(const uint8_t* src, const std::size_t length) {
+    void write_bytes(const char* src, const std::size_t length) {
         if (length == 0) {
             return;
         }
 
         _buffer.insert(_buffer.end(), src, src + length);
+    }
+
+    void write_string(const std::string &str) {
+        write_bytes(reinterpret_cast<const char *>(reinterpret_cast<const uint8_t*>(str.data())), str.size());
     }
 
     std::size_t size() const {
