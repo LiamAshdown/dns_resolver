@@ -1,18 +1,36 @@
 #pragma once
 
 #include <vector>
-#include <limits>
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
 
+#include "cache.h"
 #include "dns.h"
 
 using boost::asio::ip::udp;
 
+struct Request {
+    uint16_t client_id;
+    CacheKey key;
+    BufferReader client_reader;
+    udp::endpoint client;
+
+    udp::socket upstream;
+    udp::endpoint upstream_sender;
+    BufferWriter upstream_writer;
+    BufferReader upstream_reader;
+
+    BufferWriter response;
+    boost::asio::steady_timer timeout;
+
+    explicit Request(boost::asio::io_context &io)
+        : upstream(io, udp::endpoint(udp::v4(), 0)), timeout(io) {}
+};
+
 class Server {
 public:
-    Server() : _io_context(), _socket(_io_context), _namespace("1.1.1.1", 53) {
+    Server() : _io_context(), _socket(_io_context), _upstream_endpoint(boost::asio::ip::make_address("1.1.1.1"), 53) {
     }
 
     void listen() {
@@ -31,43 +49,109 @@ public:
 
 private:
     void start_receive() {
-        _buffer_reader.reset();
+        auto request = std::make_shared<Request>(_io_context);
 
         _socket.async_receive_from(
-            boost::asio::buffer(_buffer_reader.buffer_pointer(), MAX_PACKET_SIZE),
-            _remote_endpoint,
-            [this](const boost::system::error_code error, std::size_t transferred_bytes) {
-                if (error) {
-                    spdlog::error("Couldn't read incoming data: {}", error.message());
-                } else {
-                    _buffer_reader.resize(transferred_bytes);
+            boost::asio::buffer(request->client_reader.buffer_pointer(), MAX_PACKET_SIZE), request->client,
+            [this, request](const boost::system::error_code &error_code, const std::size_t bytes) {
+                start_receive();
 
-                    handle_query();
+                if (error_code) {
+                    return;
                 }
 
-                start_receive();
+                request->client_reader.resize(bytes);
+                forward(request);
             });
     }
 
-    void handle_query() {
+    void forward(std::shared_ptr<Request> request) {
         try {
-            const PacketDNS client_dns = DNS::parse(_buffer_reader);
-            _namespace.send(DNS::build(client_dns));
+            DNSPayload query = DNS::parse(request->client_reader);
+            request->client_id = query.header.id;
+            request->key = _cache.make_key(query.questions.at(0));
 
-            BufferReader buffer_reader = _namespace.receive();
+            if (_cache.has_key(request->key)) {
+                CacheEntry* cache_entry = _cache.get_cache(request->key);
 
-            const PacketDNS namespace_dns = DNS::parse(buffer_reader);
-            const BufferWriter buffer_writer = DNS::build(namespace_dns);
+                auto now = std::chrono::steady_clock::now();
 
-            _socket.send_to(boost::asio::buffer(buffer_writer.data(), buffer_writer.size()), _remote_endpoint);
+                if (now < cache_entry->expires) {
+                    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - cache_entry->stored).count();
+                    for (auto& it : cache_entry->payload.answers) {
+                        it.ttl -= static_cast<uint32_t>(elapsed);
+                    }
+
+                    query = cache_entry->payload;
+
+                    request->response = DNS::build(query);
+
+                    _socket.async_send_to(boost::asio::buffer(request->response.data(), request->response.size()),
+                      request->client, [request](auto, auto) {});
+
+                    return;
+                }
+
+                _cache.remove_cache(request->key);
+            }
+
+            request->upstream_writer = DNS::build(DNS::parse(request->client_reader));
         } catch (const std::exception &e) {
-            spdlog::error("Failed to handle query: {}", e.what());
+            spdlog::error("Bad query: {}", e.what());
+            return;
         }
+
+        request->upstream.async_send_to(
+            boost::asio::buffer(request->upstream_writer.data(), request->upstream_writer.size()), _upstream_endpoint,
+            [this, request](const boost::system::error_code &error_code, std::size_t) {
+                if (error_code) {
+                    return;
+                }
+
+                request->timeout.expires_after(std::chrono::seconds(2));
+                request->timeout.async_wait([request](const boost::system::error_code &error_code) {
+                    if (!error_code) {
+                        request->upstream.cancel();
+                    }
+                });
+
+                request->upstream.async_receive_from(
+                    boost::asio::buffer(request->upstream_reader.buffer_pointer(), MAX_PACKET_SIZE), request->upstream_sender,
+                    [this, request](const boost::system::error_code &error_code, std::size_t bytes) {
+                        request->timeout.cancel();
+                        if (error_code) {
+                            return;
+                        }
+
+                        request->upstream_reader.resize(bytes);
+                        reply(request);
+                    });
+            });
+    }
+
+    void reply(std::shared_ptr<Request> request) {
+        try {
+            const DNSPayload answer = DNS::parse(request->upstream_reader);
+
+            if (!answer.answers.empty()) {
+                _cache.add_key(request->key, answer);
+            }
+
+            request->response = DNS::build(answer);
+        } catch (const std::exception &e) {
+            spdlog::error("Bad upstream reply: {}", e.what());
+            return;
+        }
+
+        _socket.async_send_to(
+            boost::asio::buffer(request->response.data(), request->response.size()), request->client,
+            [request](boost::system::error_code, std::size_t) {
+
+            });
     }
 
     boost::asio::io_context _io_context;
     udp::socket _socket;
-    udp::endpoint _remote_endpoint;
-    BufferReader _buffer_reader;
-    Namespace _namespace;
+    udp::endpoint _upstream_endpoint;
+    Cache _cache;
 };

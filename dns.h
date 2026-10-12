@@ -4,9 +4,8 @@
 #include <vector>
 
 #include "buffer-reader.h"
-#include "namespace.h"
+#include "buffer-writer.h"
 #include "headers.h"
-#include "util.h"
 
 #define MAX_LABEL_SIZE 63
 #define MAX_NAMES 255
@@ -67,7 +66,7 @@ namespace DNS {
         buffer_writer.write<uint8_t>(0);
     }
 
-    inline PacketDNS parse(BufferReader& buffer_reader) {
+    inline DNSPayload parse(BufferReader& buffer_reader) {
         buffer_reader.seek(0);
 
         const DNSHeader header{
@@ -105,14 +104,14 @@ namespace DNS {
             answers.push_back(record);
         }
 
-        return PacketDNS({
+        return DNSPayload({
             .header = header,
             .questions = questions,
             .answers = answers
         });
     }
 
-    inline BufferWriter build(PacketDNS send_dns) {
+    inline BufferWriter build(DNSPayload send_dns) {
         BufferWriter buffer_writer;
 
         buffer_writer.write<uint16_t>(send_dns.header.id);
