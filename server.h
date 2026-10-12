@@ -25,7 +25,8 @@ struct Request {
     boost::asio::steady_timer timeout;
 
     explicit Request(boost::asio::io_context &io)
-        : upstream(io, udp::endpoint(udp::v4(), 0)), timeout(io) {}
+        : client_id(0), key(), upstream(io, udp::endpoint(udp::v4(), 0)), timeout(io) {
+    }
 };
 
 class Server {
@@ -145,9 +146,7 @@ private:
 
         _socket.async_send_to(
             boost::asio::buffer(request->response.data(), request->response.size()), request->client,
-            [request](boost::system::error_code, std::size_t) {
-
-            });
+            [request](boost::system::error_code, std::size_t) {});
     }
 
     boost::asio::io_context _io_context;
